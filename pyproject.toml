@@ -1,0 +1,15 @@
+[project]
+name = "comfyui-queuecontrol"
+version = "1.0.1"
+description = "A ComfyUI extension helper for the bult-in Queue Manager that gives you more control over the job queue. You can pause/resume, change the run order, hold individual items, and save/load the entire queue to disk that survives a restart/reboot."
+license = "Apache-2.0"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[project.urls]
+Repository = "https://github.com/seeker-ktf/ComfyUI-QueueControl"
+
+[tool.comfy]
+PublisherId = "seeker-ktf"
+DisplayName = "ComfyUI-QueueControl"
+Icon = ""

@@ -1,6 +1,6 @@
 [project]
-name = "ComfyUI-QueueControl"
-version = "1.0.3"
+name = "comfyui-queuecontrol"
+version = "1.0.2"
 description = "A ComfyUI extension helper for the bult-in Queue Manager that gives you more control over the job queue. You can pause/resume, change the run order, hold individual items, and save/load the entire queue to disk that survives a restart/reboot. This extension does not load any new dependencies."
 license = "Apache-2.0"
 readme = "README.md"

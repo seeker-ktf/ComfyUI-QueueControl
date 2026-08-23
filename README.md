@@ -8,7 +8,7 @@ A ComfyUI extension helper for the bult-in Queue Manager that gives you more con
 
 ComfyUI's native queue is functional, but it runs first-in/first-out with no way to pause, reorder, or save anything. If you have 8 jobs queued and need to restart the server for a new custom node, you lose them all. If you realize job #3 should run before job #7, too bad. If you want to hold a few jobs while the rest run, there's no mechanism for that.
 
-This extension addresses all of that without replacing ComfyUI's queue system. It patches the existing queue to add priority ordering and pause control, and provides a panel in the top bar to manage everything.
+This extension addresses all of that without replacing ComfyUI's queue system. It patches the existing queue to add priority ordering and pause control, and provides a panel in the top bar to manage everything. <u>It does not load new dependencies</u>, so this won't break your Comfy install.
 
 ## Features
 
@@ -60,16 +60,16 @@ This is mainly for the restart scenario: save your queue, restart ComfyUI, load 
 
 ![QueueLabelNode](images/QueueLabelNode.png)
 
-One of the other frustrating things about the ComfyUI Queue is that it's very difficult to tell what job is what. I created this node to hep with that but it's only marginally useful. The real issue is that most of the useful information that exists to identify a job only exists after it starts running, but not while it is waiting in the queue. (That's useful for other reasons but not for this.) The Queue Label node is a stand alone and doesn't need to be connected to anything. 
+One of the other frustrating things about the ComfyUI Queue is that it's very difficult to tell what job is what. I created this node to hep with that but it's only somewhat useful depending on what you are doing. The real issue is that most of the useful information that exists to identify a job only exists after it starts running, but not while it is waiting in the queue. (That's useful for other reasons but not for this.) The Queue Label node is a stand alone and doesn't need to be connected to anything. 
 
-**Queue Label** is simple node (under the **QueueControl** category) that gives your workflow a name in the queue panel. It has two inputs:
+**Queue Label** is simple node (under the **QueueControl** category) that **optionally** gives your workflow a name in the queue panel. It has two inputs:
 
-- **label** — A text field you type into. This is whatever not you want to leave yourself.
+- **label** — A text field you type into. This is whatever note you want to leave yourself. (This can also be connected to a node.)
 - **info** — An optional input that accepts any type (string, number, etc.). Connect it to another node's output to include dynamic info.
 
-If both are filled in, the panel shows something like "My Workflow (512)". Without the node, jobs show a truncated ID. If you use an external seed generator, that will fill in. If you connect a latent output, you'll get the width of the latent, some fancier text inputs that you can increment with each job in a batch run will also populate it in some way. My best advice it to lay around with it and see what woks for you. There are so many variations of workflows that it's hard to give exact guidance.
+If both are filled in, the panel shows like "Thing in the field (Thing input to info port)" . Without the node, jobs show a truncated ID. If you use an external seed generator, that will fill in. If you connect an empty latent output, you'll get the width of the latent, but if you connect to a final latent, you'll *probably* get the first parameter of whatever KSampler you're using. If you attach to the model/text encoder/VAE loader to with get the name of the model/VAE. Maybe the most useful thing is to attach to the Conditioning port, in which case the ***entire*** prompt will show up. That can obviously get crowded on the queue list, but its a fairly unique identifier. Also remember that you can connect directly to the label widget so you could have 2 "automatically" generated labels. My best advice it to play around with it and see what woks for you. There are so many variations of workflows that it's hard to give exact guidance.
 
-**Note again:** The info input can only display values that are already written in the workflow at queue time — typed text, dropdown selections, fixed numbers. Anything that requires a node to compute (reading a file, generating a random number, processing text) won't be available because it hasn't executed yet.
+**Note again:** The info input can only display values that are already written in the workflow at queue time - typed text, dropdown selections, fixed numbers. Anything that requires a node to compute (reading a file, generating a random number, processing text) won't be available because it hasn't executed yet.
 
 ## Installation
 
@@ -77,7 +77,7 @@ Install ComfyUI-QueueControl from **ComfyUI Manager**.
 
 ----or---
 
-If you want to install it the manual way, clone or download this repo into your ComfyUI `custom_nodes` directory:
+If you want to install it the manual way, clone or download this repo into your `ComfyUI/custom_nodes` directory:
 
 ```
 cd ComfyUI/custom_nodes

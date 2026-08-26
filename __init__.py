@@ -76,7 +76,7 @@ def _get_sequence(item):
     return int(item[0] % PRIORITY_MULTIPLIER)
 
 
-# ── Queue patches (deferred until first use) ─────────────────────
+# ── Queue patches ─────────────────────────────────────────────────
 _patch_installed = False
 
 
@@ -132,6 +132,10 @@ def _install_patch():
     except Exception as e:
         logging.error(f"{LOG_PREFIX} Queue patches FAILED: {e}")
         return False
+
+
+# Try to install at startup — fallback to first use if queue isn't ready yet
+_install_patch()
 
 
 # ── Queue Label Node ──────────────────────────────────────────────

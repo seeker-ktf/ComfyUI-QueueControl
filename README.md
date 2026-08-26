@@ -103,6 +103,14 @@ The save file (`saved_queue.json`) contains the full workflow prompt data for ea
 
 This extension interacts directly with ComfyUI's queue internals, which means it could potentially break if ComfyUI significantly changes the `PromptQueue` class in `execution.py`. In practice, the queue structure has been stable because many other tools depend on it. If something does break after a ComfyUI update, the extension fails gracefully — the patch just doesn't install, and ComfyUI runs normally without the priority features.
 
+## Change History
+
+```
+1.0.3	Fixed bug where clicking on the Queue button immmediatley after submit set all priorites to 0.
+```
+
+
+
 ## License
 
 Apache 2.0

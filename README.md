@@ -42,7 +42,7 @@ The panel can display jobs sorted **By Time** (submission order) or **By Priorit
 
 ![SaveRestoreQueue](images/SaveRestoreQueue.png)
 
-I saved the best for (second to) last. This happens to me as well: I submit a bunch of jobs and immediately realize I need to restart Comfy. For instance, I need to turn Sage on/off with a restart (ComfyUI-ReStartupFlags can hep with that >cough<), or maybe even want to reboot my computer first. Now, that's not a maddening experience.
+This happens to me as well: I submit a bunch of jobs and immediately realize I need to restart Comfy. For instance, I need to turn Sage on/off with a restart (ComfyUI-ReStartupFlags can hep with that >cough<), or maybe even want to reboot my computer first. Now, that's not a maddening experience.
 
 **Save Queue** writes every queued item to a JSON file in the extension folder. Each job's full workflow data and priority are preserved. A checkbox lets you optionally include the currently running job.
 
@@ -55,6 +55,14 @@ This is mainly for the restart scenario: save your queue, restart ComfyUI, load 
 **SECURITY WARNING:** The queue gets saved into the ComfyUI/custom_nodes/ComfyUI-QueueControl directory unencrypted. If you are the only user of the environment then no worries. However, if this is a shared machine the workflows in the queue could be exposed to other users which might be delicate for some users.
 
 <u>Also note:</u> there is only one copy of the file. It was not intended to keep a lot of queues and I didn't want to always have to futz with names/opening a file every time. Having said that, I have been going over tot hat directory and doing all sorts of copy/rename/editing on the saved queues. 
+
+### Persistent Queueing (Auto-save)
+
+![SaveRestoreQueue](images/SaveRestoreQueue.png)
+
+I saved the best for (second to) last. After some discussions with the Reddit community, it became clear that I missed a big feature. Version 1.1.0 now auto-saves the queue and will automatically restore it upon restart. If you have loaded the queue and your ComfyUI server fails for any reason (like when Windows just arbitrarily decided to update your system while you were sleeping) your queue will be restored when you restart. If it detects an unfinished queue and restores things, QueueControl will pause the queue and let you know what's going on. This gives you a chance to think about what you want to do. Remember that you have the option to save it using the explicit save, so that id you had a lot of "overnight runs" that didn't complete you can save the queue and restart everything when the timing is better.
+
+**SECURITY WARNING:** (The same note as queue saving.) The queue gets saved into the ComfyUI/custom_nodes/ComfyUI-QueueControl directory unencrypted. If you are the only user of the environment then no worries. However, if this is a shared machine the workflows in the queue could be exposed to other users which might be delicate for some users.
 
 ### Queue Label Node
 
@@ -97,7 +105,7 @@ The extension patches two methods on ComfyUI's existing `PromptQueue` object:
 
 Everything stays in ComfyUI's native queue — there's no separate queue or replacement system. The patches are installed on first use rather than at module load time to avoid interfering with ComfyUI's startup sequence.
 
-The save file (`saved_queue.json`) contains the full workflow prompt data for each job, which is the same data ComfyUI uses internally to execute a workflow. Sensitive data (API keys, etc.) is stripped on save.
+The save files (`saved_queue.json`or `auto_backup.json`) contain the full workflow prompt data for each job, which is the same data ComfyUI uses internally to execute a workflow. Sensitive data (API keys, etc.) is stripped on save.
 
 ## Compatibility
 
@@ -107,6 +115,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 
 ```
 1.0.3	Fixed bug where clicking on the Queue button immmediatley after submit set all priorites to 0.
+1.1.0	Added Persistent Queuing.
 ```
 
 

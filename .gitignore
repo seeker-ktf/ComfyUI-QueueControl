@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 readmedrafts
 saved_queue.json
+auto_backup.json

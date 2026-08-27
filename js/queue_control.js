@@ -218,14 +218,47 @@ app.registerExtension({
         let sortByTime = true;  // true = by submission time, false = by priority
         let lastChangedId = null;  // track which item was just changed
 
-        // Fetch initial state
+        // Fetch initial state — check for restore notification
         try {
             const resp = await fetch("/queue_control/status");
             const data = await resp.json();
             paused = data.paused;
+            if (data.restore_message) {
+                // Show popup after a short delay so the UI is ready
+                setTimeout(() => alert(data.restore_message), 500);
+            }
         } catch (e) {
             console.warn("[QueueControl] Could not fetch initial status:", e);
         }
+
+        // Poll for restore message (restore happens ~3s after startup,
+        // JS may have loaded before it completes)
+        let restoreCheckCount = 0;
+        const restoreChecker = setInterval(async () => {
+            restoreCheckCount++;
+            if (restoreCheckCount > 10) {
+                clearInterval(restoreChecker);
+                return;
+            }
+            try {
+                const resp = await fetch("/queue_control/status");
+                const data = await resp.json();
+                if (data.restore_message) {
+                    clearInterval(restoreChecker);
+                    paused = data.paused;
+                    // Update pause button if it exists
+                    if (pauseBtnRef) {
+                        pauseBtnRef.icon = "play";
+                        pauseBtnRef.content = "Resume";
+                        pauseBtnRef.element.style.background = "#b33";
+                        pauseBtnRef.element.style.borderColor = "#d44";
+                    }
+                    alert(data.restore_message);
+                }
+            } catch (e) {}
+        }, 2000);
+
+        let pauseBtnRef = null;
 
         // ── Priority change ──────────────────────────────
         async function setPriority(promptId, priority) {
@@ -481,6 +514,7 @@ app.registerExtension({
             });
 
             // Set initial color
+            pauseBtnRef = pauseBtn;
             pauseBtn.element.style.background = paused ? "#b33" : "#2a7a2a";
             pauseBtn.element.style.borderColor = paused ? "#d44" : "#3a9a3a";
 

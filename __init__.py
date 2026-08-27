@@ -19,7 +19,87 @@ from server import PromptServer
 
 LOG_PREFIX = "[QueueControl]"
 _EXTENSION_DIR = os.path.dirname(os.path.abspath(__file__))
+_AUTO_BACKUP_PATH = os.path.join(_EXTENSION_DIR, "auto_backup.json")
 logging.info(f"{LOG_PREFIX} Loading extension...")
+
+# ── Restore notification (read once by JS on startup) ─────────────
+_restore_message = None
+
+# ── Auto-backup (debounced) ───────────────────────────────────────
+_backup_dirty = False
+_backup_lock = threading.Lock()
+_backup_thread = None
+
+
+def _mark_dirty():
+    """Flag the queue as needing a backup."""
+    global _backup_dirty
+    with _backup_lock:
+        _backup_dirty = True
+
+
+def _do_auto_backup():
+    """Write the current queue state to auto_backup.json (atomic via temp file)."""
+    try:
+        pq = PromptServer.instance.prompt_queue
+        save_items = []
+        with pq.mutex:
+            for item in pq.queue:
+                priority = _get_priority(item)
+                save_items.append({
+                    "priority": priority,
+                    "prompt_id": item[1],
+                    "prompt": item[2] if len(item) > 2 else {},
+                    "extra_data": item[3] if len(item) > 3 else {},
+                    "outputs_to_execute": item[4] if len(item) > 4 else [],
+                })
+            # Also include currently running jobs for crash recovery
+            for task_id, item in pq.currently_running.items():
+                priority = _get_priority(item)
+                save_items.append({
+                    "priority": priority,
+                    "prompt_id": item[1],
+                    "prompt": item[2] if len(item) > 2 else {},
+                    "extra_data": item[3] if len(item) > 3 else {},
+                    "outputs_to_execute": item[4] if len(item) > 4 else [],
+                    "was_running": True,
+                })
+        save_data = {
+            "version": 1,
+            "saved_at": int(time.time() * 1000),
+            "item_count": len(save_items),
+            "items": save_items,
+        }
+        # Atomic write: temp file then rename
+        tmp_path = _AUTO_BACKUP_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(save_data, f)
+        os.replace(tmp_path, _AUTO_BACKUP_PATH)
+    except Exception as e:
+        logging.warning(f"{LOG_PREFIX} Auto-backup failed: {e}")
+
+
+def _backup_loop():
+    """Background thread: checks every 2 seconds if queue needs backing up."""
+    global _backup_dirty
+    while True:
+        time.sleep(2)
+        with _backup_lock:
+            if not _backup_dirty:
+                continue
+            _backup_dirty = False
+        _do_auto_backup()
+
+
+def _start_backup_thread():
+    global _backup_thread
+    if _backup_thread is None:
+        _backup_thread = threading.Thread(target=_backup_loop, daemon=True)
+        _backup_thread.start()
+        logging.info(f"{LOG_PREFIX} Auto-backup thread started")
+
+
+_start_backup_thread()
 
 # ── Pause state ───────────────────────────────────────────────────
 _paused = False
@@ -111,6 +191,7 @@ def _install_patch():
                     self.currently_running[i] = copy.deepcopy(item)
                     self.task_counter += 1
                     self.server.queue_updated()
+                    _mark_dirty()
                     return (item, i)
 
         # Patch put() — override sort key with priority 5
@@ -123,6 +204,7 @@ def _install_patch():
                 heapq.heappush(self.queue, new_item)
                 self.server.queue_updated()
                 self.not_empty.notify()
+            _mark_dirty()
 
         pq.get = types.MethodType(_patched_get, pq)
         pq.put = types.MethodType(_patched_put, pq)
@@ -234,10 +316,16 @@ __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 # ── API routes ────────────────────────────────────────────────────
 @PromptServer.instance.routes.get("/queue_control/status")
 async def qc_status(request):
-    return web.json_response({
+    global _restore_message
+    msg = _restore_message
+    _restore_message = None  # Clear after first read
+    resp = {
         "paused": is_paused(),
         "patch_installed": _patch_installed,
-    })
+    }
+    if msg:
+        resp["restore_message"] = msg
+    return web.json_response(resp)
 
 
 @PromptServer.instance.routes.post("/queue_control/pause")
@@ -352,6 +440,7 @@ async def qc_set_priority(request):
         pq.not_empty.notify()
 
     logging.info(f"{LOG_PREFIX} Set {prompt_id[:8]}... to priority {new_priority}")
+    _mark_dirty()
     return web.json_response({"ok": True, "prompt_id": prompt_id, "priority": new_priority})
 
 @PromptServer.instance.routes.post("/queue_control/save")
@@ -415,24 +504,31 @@ async def qc_save(request):
 async def qc_load(request):
     """Load a saved queue from disk and push items back into the queue."""
     _install_patch()
+    result = await _load_queue_from_file(os.path.join(_EXTENSION_DIR, "saved_queue.json"))
+    if "error" in result:
+        return web.json_response(result, status=result.get("status", 500))
+    return web.json_response(result)
+
+
+async def _load_queue_from_file(save_path):
+    """Shared load logic used by both the API endpoint and auto-restore."""
     import execution
 
-    save_path = os.path.join(_EXTENSION_DIR, "saved_queue.json")
     if not os.path.exists(save_path):
-        return web.json_response({"error": "No saved queue file found"}, status=404)
+        return {"error": "No saved queue file found", "status": 404}
 
     try:
         with open(save_path, "r", encoding="utf-8") as f:
             save_data = json.load(f)
     except Exception as e:
-        return web.json_response({"error": f"Could not read save file: {e}"}, status=500)
+        return {"error": f"Could not read save file: {e}", "status": 500}
 
     if save_data.get("version") != 1:
-        return web.json_response({"error": "Unknown save file version"}, status=400)
+        return {"error": "Unknown save file version", "status": 400}
 
     items = save_data.get("items", [])
     if not items:
-        return web.json_response({"ok": True, "loaded": 0, "held": 0, "errors": []})
+        return {"ok": True, "loaded": 0, "held": 0, "errors": []}
 
     pq = PromptServer.instance.prompt_queue
     loaded = 0
@@ -484,12 +580,12 @@ async def qc_load(request):
     pq.server.queue_updated()
 
     logging.info(f"{LOG_PREFIX} Loaded {loaded} items ({held} on hold)")
-    return web.json_response({
+    return {
         "ok": True,
         "loaded": loaded,
         "held": held,
         "errors": errors,
-    })
+    }
 
 
 @PromptServer.instance.routes.get("/queue_control/has_save")
@@ -507,3 +603,59 @@ async def qc_has_save(request):
         except Exception:
             pass
     return web.json_response({"exists": exists, **info})
+
+# ── Auto-restore on startup ──────────────────────────────────────
+import asyncio
+
+
+def _schedule_auto_restore():
+    """Schedule auto-restore to run once the event loop is available."""
+    global _restore_message
+
+    if not os.path.exists(_AUTO_BACKUP_PATH):
+        logging.info(f"{LOG_PREFIX} No auto-backup found — nothing to restore")
+        return
+
+    # Check if backup has any items
+    try:
+        with open(_AUTO_BACKUP_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("item_count", 0) == 0:
+            logging.info(f"{LOG_PREFIX} Auto-backup is empty — nothing to restore")
+            return
+    except Exception:
+        return
+
+    # Pause IMMEDIATELY so nothing runs before restore completes
+    set_paused(True)
+    logging.info(f"{LOG_PREFIX} Pre-paused queue for auto-restore")
+
+    async def _do_restore():
+        global _restore_message
+        # Small delay to let ComfyUI finish initializing
+        await asyncio.sleep(3)
+        _install_patch()
+        # Pause before restoring so nothing starts running
+        set_paused(True)
+        result = await _load_queue_from_file(_AUTO_BACKUP_PATH)
+        if result.get("ok"):
+            loaded = result.get("loaded", 0)
+            held = result.get("held", 0)
+            msg = f"Restored {loaded} item(s) from backup. Queue is paused."
+            if held > 0:
+                msg += f"\n{held} item(s) failed validation and are on hold."
+            _restore_message = msg
+            logging.info(f"{LOG_PREFIX} {msg}")
+        else:
+            logging.warning(f"{LOG_PREFIX} Auto-restore failed: {result.get('error')}")
+
+    # Get the running event loop and schedule the restore
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(_do_restore())
+        logging.info(f"{LOG_PREFIX} Auto-restore scheduled")
+    except Exception as e:
+        logging.warning(f"{LOG_PREFIX} Could not schedule auto-restore: {e}")
+
+
+_schedule_auto_restore()

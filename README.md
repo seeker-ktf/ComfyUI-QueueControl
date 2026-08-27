@@ -58,7 +58,7 @@ This is mainly for the restart scenario: save your queue, restart ComfyUI, load 
 
 ### Persistent Queueing (Auto-save)
 
-![SaveRestoreQueue](images/SaveRestoreQueue.png)
+![AutoRecover](images/AutoRecover.png)
 
 I saved the best for (second to) last. After some discussions with the Reddit community, it became clear that I missed a big feature. Version 1.1.0 now auto-saves the queue and will automatically restore it upon restart. If you have loaded the queue and your ComfyUI server fails for any reason (like when Windows just arbitrarily decided to update your system while you were sleeping) your queue will be restored when you restart. If it detects an unfinished queue and restores things, QueueControl will pause the queue and let you know what's going on. This gives you a chance to think about what you want to do. Remember that you have the option to save it using the explicit save, so that id you had a lot of "overnight runs" that didn't complete you can save the queue and restart everything when the timing is better.
 

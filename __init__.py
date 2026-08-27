@@ -5,6 +5,7 @@ Only one priority-0 item allowed; setting a new 0 bumps the old one to 1.
 New jobs enter at priority 5.
 """
 
+import asyncio
 import copy
 import heapq
 import json
@@ -22,84 +23,6 @@ _EXTENSION_DIR = os.path.dirname(os.path.abspath(__file__))
 _AUTO_BACKUP_PATH = os.path.join(_EXTENSION_DIR, "auto_backup.json")
 logging.info(f"{LOG_PREFIX} Loading extension...")
 
-# ── Restore notification (read once by JS on startup) ─────────────
-_restore_message = None
-
-# ── Auto-backup (debounced) ───────────────────────────────────────
-_backup_dirty = False
-_backup_lock = threading.Lock()
-_backup_thread = None
-
-
-def _mark_dirty():
-    """Flag the queue as needing a backup."""
-    global _backup_dirty
-    with _backup_lock:
-        _backup_dirty = True
-
-
-def _do_auto_backup():
-    """Write the current queue state to auto_backup.json (atomic via temp file)."""
-    try:
-        pq = PromptServer.instance.prompt_queue
-        save_items = []
-        with pq.mutex:
-            for item in pq.queue:
-                priority = _get_priority(item)
-                save_items.append({
-                    "priority": priority,
-                    "prompt_id": item[1],
-                    "prompt": item[2] if len(item) > 2 else {},
-                    "extra_data": item[3] if len(item) > 3 else {},
-                    "outputs_to_execute": item[4] if len(item) > 4 else [],
-                })
-            # Also include currently running jobs for crash recovery
-            for task_id, item in pq.currently_running.items():
-                priority = _get_priority(item)
-                save_items.append({
-                    "priority": priority,
-                    "prompt_id": item[1],
-                    "prompt": item[2] if len(item) > 2 else {},
-                    "extra_data": item[3] if len(item) > 3 else {},
-                    "outputs_to_execute": item[4] if len(item) > 4 else [],
-                    "was_running": True,
-                })
-        save_data = {
-            "version": 1,
-            "saved_at": int(time.time() * 1000),
-            "item_count": len(save_items),
-            "items": save_items,
-        }
-        # Atomic write: temp file then rename
-        tmp_path = _AUTO_BACKUP_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(save_data, f)
-        os.replace(tmp_path, _AUTO_BACKUP_PATH)
-    except Exception as e:
-        logging.warning(f"{LOG_PREFIX} Auto-backup failed: {e}")
-
-
-def _backup_loop():
-    """Background thread: checks every 2 seconds if queue needs backing up."""
-    global _backup_dirty
-    while True:
-        time.sleep(2)
-        with _backup_lock:
-            if not _backup_dirty:
-                continue
-            _backup_dirty = False
-        _do_auto_backup()
-
-
-def _start_backup_thread():
-    global _backup_thread
-    if _backup_thread is None:
-        _backup_thread = threading.Thread(target=_backup_loop, daemon=True)
-        _backup_thread.start()
-        logging.info(f"{LOG_PREFIX} Auto-backup thread started")
-
-
-_start_backup_thread()
 
 # ── Pause state ───────────────────────────────────────────────────
 _paused = False
@@ -140,19 +63,16 @@ def _next_sequence():
 
 
 def _make_sort_key(priority, seq=None):
-    """Build the numeric sort key: priority * multiplier + sequence."""
     if seq is None:
         seq = _next_sequence()
     return priority * PRIORITY_MULTIPLIER + seq
 
 
 def _get_priority(item):
-    """Extract priority (0-9) from a queue item's sort key."""
     return int(item[0] // PRIORITY_MULTIPLIER)
 
 
 def _get_sequence(item):
-    """Extract sequence number from a queue item's sort key."""
     return int(item[0] % PRIORITY_MULTIPLIER)
 
 
@@ -167,44 +87,33 @@ def _install_patch():
     try:
         pq = PromptServer.instance.prompt_queue
 
-        # Patch get() — respect pause flag and skip priority-9 items
         def _patched_get(self, timeout=None):
             with self.not_empty:
                 while True:
-                    # Wait while paused or empty
                     if is_paused() or len(self.queue) == 0:
                         self.not_empty.wait(timeout=timeout)
                         if timeout is not None and (is_paused() or len(self.queue) == 0):
                             return None
                         continue
-                    # Check if top item is on hold (priority 9)
                     top = self.queue[0]
                     if _get_priority(top) >= HOLD_PRIORITY:
-                        # Everything remaining is on hold — treat as empty
                         self.not_empty.wait(timeout=timeout)
                         if timeout is not None:
                             return None
                         continue
-                    # Good to go — pop it
                     item = heapq.heappop(self.queue)
                     i = self.task_counter
                     self.currently_running[i] = copy.deepcopy(item)
                     self.task_counter += 1
                     self.server.queue_updated()
-                    _mark_dirty()
                     return (item, i)
 
-        # Patch put() — override sort key with priority 5
-        _original_put = pq.put
-
         def _patched_put(self, item):
-            # Replace the number (index 0) with our priority sort key
             new_item = (_make_sort_key(DEFAULT_PRIORITY),) + item[1:]
             with self.mutex:
                 heapq.heappush(self.queue, new_item)
                 self.server.queue_updated()
                 self.not_empty.notify()
-            _mark_dirty()
 
         pq.get = types.MethodType(_patched_get, pq)
         pq.put = types.MethodType(_patched_put, pq)
@@ -216,14 +125,11 @@ def _install_patch():
         return False
 
 
-# Try to install at startup — fallback to first use if queue isn't ready yet
 _install_patch()
 
 
 # ── Queue Label Node ──────────────────────────────────────────────
 class QueueLabel:
-    """A node that holds a display name for this workflow in the queue panel."""
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -232,6 +138,11 @@ class QueueLabel:
             },
             "optional": {
                 "info": ("*",),
+                "info_idx": ("INT", {"default": 0, "min": 0, "max": 50}),
+                "info2": ("*",),
+                "info2_idx": ("INT", {"default": 0, "min": 0, "max": 50}),
+                "info3": ("*",),
+                "info3_idx": ("INT", {"default": 0, "min": 0, "max": 50}),
             },
         }
 
@@ -240,15 +151,12 @@ class QueueLabel:
     FUNCTION = "execute"
     CATEGORY = "QueueControl"
 
-    def execute(self, label, info=None):
-        # Does nothing at runtime — the label is read from the prompt data
+    def execute(self, label, info=None, info_idx=0, info2=None, info2_idx=0, info3=None, info3_idx=0):
         return {}
 
 
-def _trace_value(prompt, ref, depth=0):
-    """Follow a connection reference through the prompt to find a literal value.
-    refs look like ["node_id", output_index]. We look up that node's inputs
-    and try to find a literal. Gives up after 10 hops to avoid loops."""
+def _trace_value(prompt, ref, idx=0, depth=0):
+    """Follow a connection reference and return the value at the given input index."""
     if depth > 10:
         return None
     if not isinstance(ref, list) or len(ref) < 2:
@@ -258,42 +166,50 @@ def _trace_value(prompt, ref, depth=0):
     if not isinstance(node_data, dict):
         return None
     inputs = node_data.get("inputs", {})
-    # Look through inputs for a literal value we can use
-    for key, val in inputs.items():
-        if isinstance(val, list):
-            # It's another connection — trace it
-            result = _trace_value(prompt, val, depth + 1)
-            if result is not None:
-                return result
-        elif isinstance(val, (str, int, float)):
-            # Found a literal — return it if it looks meaningful
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-            elif isinstance(val, (int, float)):
-                return str(val)
+    # Get all inputs in order
+    input_list = list(inputs.items())
+    if idx >= len(input_list):
+        return None
+    key, val = input_list[idx]
+    if isinstance(val, list):
+        # It's a connection — trace it (use index 0 for chained lookups)
+        return _trace_value(prompt, val, 0, depth + 1)
+    elif isinstance(val, (str, int, float)):
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        elif isinstance(val, (int, float)):
+            return str(val)
     return None
 
 
 def _extract_label(prompt):
-    """Scan a prompt dict for a QueueLabel node and return its label text."""
     if not isinstance(prompt, dict):
         return ""
     for node_id, node_data in prompt.items():
         if isinstance(node_data, dict) and node_data.get("class_type") == "QueueLabel":
             inputs = node_data.get("inputs", {})
             label = inputs.get("label", "")
-            info = inputs.get("info", None)
 
-            # Resolve info if it's a connection
-            info_str = ""
-            if isinstance(info, list):
-                resolved = _trace_value(prompt, info)
+            # Resolve all info fields
+            info_parts = []
+            for info_key, idx_key in (("info", "info_idx"), ("info2", "info2_idx"), ("info3", "info3_idx")):
+                val = inputs.get(info_key, None)
+                idx = inputs.get(idx_key, 0)
+                if isinstance(idx, list):
+                    idx = 0  # idx is a connection somehow — fall back to 0
+                idx = int(idx) if idx else 0
+                resolved = ""
+                if isinstance(val, list):
+                    r = _trace_value(prompt, val, idx)
+                    if r:
+                        resolved = r
+                elif isinstance(val, (str, int, float)):
+                    resolved = str(val).strip()
                 if resolved:
-                    info_str = resolved
-            elif isinstance(info, (str, int, float)):
-                info_str = str(info).strip()
+                    info_parts.append(resolved)
 
-            # Combine label and info
+            info_str = " | ".join(info_parts)
+
             if label and info_str:
                 return f"{label} ({info_str})"
             elif label:
@@ -303,178 +219,34 @@ def _extract_label(prompt):
     return ""
 
 
-NODE_CLASS_MAPPINGS = {
-    "QueueLabel": QueueLabel,
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "QueueLabel": "Queue Label",
-}
+NODE_CLASS_MAPPINGS = {"QueueLabel": QueueLabel}
+NODE_DISPLAY_NAME_MAPPINGS = {"QueueLabel": "Queue Label"}
 WEB_DIRECTORY = "./js"
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 
 
-# ── API routes ────────────────────────────────────────────────────
-@PromptServer.instance.routes.get("/queue_control/status")
-async def qc_status(request):
-    global _restore_message
-    msg = _restore_message
-    _restore_message = None  # Clear after first read
-    resp = {
-        "paused": is_paused(),
-        "patch_installed": _patch_installed,
-    }
-    if msg:
-        resp["restore_message"] = msg
-    return web.json_response(resp)
+# ── Auto-backup (runs every 2 seconds) ───────────────────────────
+_last_backup_hash = None
+_backup_thread = None
 
 
-@PromptServer.instance.routes.post("/queue_control/pause")
-async def qc_pause(request):
-    _install_patch()
+def _do_auto_backup():
+    global _last_backup_hash
     try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
-
-    paused = data.get("paused")
-    if paused is None:
-        set_paused(not is_paused())
-    else:
-        set_paused(bool(paused))
-
-    return web.json_response({"paused": is_paused(), "patch_installed": _patch_installed})
-
-
-@PromptServer.instance.routes.get("/queue_control/queue")
-async def qc_queue_list(request):
-    """List all queued items with priority and submission info."""
-    _install_patch()
-    pq = PromptServer.instance.prompt_queue
-    with pq.mutex:
-        items = []
-        # Sort a copy for display (heapq order)
-        sorted_queue = sorted(pq.queue, key=lambda x: x[0])
-        for pos, item in enumerate(sorted_queue):
-            priority = _get_priority(item)
-            prompt_id = item[1]
-            prompt = item[2] if len(item) > 2 else {}
-            extra_data = item[3] if len(item) > 3 else {}
-            create_time = extra_data.get("create_time", 0)
-            label = _extract_label(prompt)
-            items.append({
-                "position": pos + 1,
-                "prompt_id": prompt_id,
-                "priority": priority,
-                "create_time": create_time,
-                "label": label,
-            })
-
-        # Also include currently running
-        running = []
-        for task_id, item in pq.currently_running.items():
-            prompt_id = item[1]
-            prompt = item[2] if len(item) > 2 else {}
-            extra_data = item[3] if len(item) > 3 else {}
-            create_time = extra_data.get("create_time", 0)
-            label = _extract_label(prompt)
-            running.append({
-                "prompt_id": prompt_id,
-                "create_time": create_time,
-                "label": label,
-            })
-
-    return web.json_response({
-        "paused": is_paused(),
-        "running": running,
-        "queued": items,
-    })
-
-
-@PromptServer.instance.routes.post("/queue_control/priority")
-async def qc_set_priority(request):
-    """Change an item's priority. Enforces only-one-zero rule."""
-    _install_patch()
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
-
-    prompt_id = data.get("prompt_id")
-    new_priority = data.get("priority")
-
-    if prompt_id is None or new_priority is None:
-        return web.json_response({"error": "Need prompt_id and priority"}, status=400)
-
-    new_priority = int(new_priority)
-    if new_priority < 0 or new_priority > 9:
-        return web.json_response({"error": "Priority must be 0-9"}, status=400)
-
-    pq = PromptServer.instance.prompt_queue
-    with pq.mutex:
-        # Find the target item
-        target_idx = None
-        for i, item in enumerate(pq.queue):
-            if item[1] == prompt_id:
-                target_idx = i
-                break
-
-        if target_idx is None:
-            return web.json_response({"error": "Item not found in queue"}, status=404)
-
-        # If setting to 0, bump any existing 0 to 1
-        if new_priority == 0:
-            for i, item in enumerate(pq.queue):
-                if _get_priority(item) == 0 and item[1] != prompt_id:
-                    old_seq = _get_sequence(item)
-                    pq.queue[i] = (_make_sort_key(1, old_seq),) + item[1:]
-
-        # Update the target item's priority (keep its sequence for FIFO)
-        target_item = pq.queue[target_idx]
-        old_seq = _get_sequence(target_item)
-        pq.queue[target_idx] = (_make_sort_key(new_priority, old_seq),) + target_item[1:]
-
-        heapq.heapify(pq.queue)
-        pq.server.queue_updated()
-
-        # Wake the queue thread in case something became runnable
-        pq.not_empty.notify()
-
-    logging.info(f"{LOG_PREFIX} Set {prompt_id[:8]}... to priority {new_priority}")
-    _mark_dirty()
-    return web.json_response({"ok": True, "prompt_id": prompt_id, "priority": new_priority})
-
-@PromptServer.instance.routes.post("/queue_control/save")
-async def qc_save(request):
-    """Save the current queue to a JSON file."""
-    _install_patch()
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-
-    include_running = data.get("include_running", False)
-    pq = PromptServer.instance.prompt_queue
-    save_items = []
-
-    with pq.mutex:
-        # Save queued items
-        for item in pq.queue:
-            priority = _get_priority(item)
-            save_items.append({
-                "priority": priority,
-                "prompt_id": item[1],
-                "prompt": item[2] if len(item) > 2 else {},
-                "extra_data": item[3] if len(item) > 3 else {},
-                "outputs_to_execute": item[4] if len(item) > 4 else [],
-                # Skip index 5 (sensitive data)
-            })
-
-        # Optionally save running items
-        if include_running:
-            for task_id, item in pq.currently_running.items():
-                priority = _get_priority(item)
+        pq = PromptServer.instance.prompt_queue
+        save_items = []
+        with pq.mutex:
+            for item in pq.queue:
                 save_items.append({
-                    "priority": priority,
+                    "priority": _get_priority(item),
+                    "prompt_id": item[1],
+                    "prompt": item[2] if len(item) > 2 else {},
+                    "extra_data": item[3] if len(item) > 3 else {},
+                    "outputs_to_execute": item[4] if len(item) > 4 else [],
+                })
+            for task_id, item in pq.currently_running.items():
+                save_items.append({
+                    "priority": _get_priority(item),
                     "prompt_id": item[1],
                     "prompt": item[2] if len(item) > 2 else {},
                     "extra_data": item[3] if len(item) > 3 else {},
@@ -482,36 +254,41 @@ async def qc_save(request):
                     "was_running": True,
                 })
 
-    save_data = {
-        "version": 1,
-        "saved_at": int(time.time() * 1000),
-        "item_count": len(save_items),
-        "items": save_items,
-    }
+        current_ids = tuple(sorted(i["prompt_id"] for i in save_items))
+        if current_ids == _last_backup_hash:
+            return
+        _last_backup_hash = current_ids
 
-    save_path = os.path.join(_EXTENSION_DIR, "saved_queue.json")
-    try:
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(save_data, f, indent=2)
-        logging.info(f"{LOG_PREFIX} Saved {len(save_items)} items to {save_path}")
-        return web.json_response({"ok": True, "count": len(save_items), "path": save_path})
+        save_data = {
+            "version": 1,
+            "saved_at": int(time.time() * 1000),
+            "item_count": len(save_items),
+            "items": save_items,
+        }
+        tmp_path = _AUTO_BACKUP_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(save_data, f)
+        os.replace(tmp_path, _AUTO_BACKUP_PATH)
     except Exception as e:
-        logging.error(f"{LOG_PREFIX} Save failed: {e}")
-        return web.json_response({"error": str(e)}, status=500)
+        logging.warning(f"{LOG_PREFIX} Auto-backup failed: {e}")
 
 
-@PromptServer.instance.routes.post("/queue_control/load")
-async def qc_load(request):
-    """Load a saved queue from disk and push items back into the queue."""
-    _install_patch()
-    result = await _load_queue_from_file(os.path.join(_EXTENSION_DIR, "saved_queue.json"))
-    if "error" in result:
-        return web.json_response(result, status=result.get("status", 500))
-    return web.json_response(result)
+def _backup_loop():
+    while True:
+        time.sleep(2)
+        _do_auto_backup()
 
 
+def _start_backup_thread():
+    global _backup_thread
+    if _backup_thread is None:
+        _backup_thread = threading.Thread(target=_backup_loop, daemon=True)
+        _backup_thread.start()
+        logging.info(f"{LOG_PREFIX} Auto-backup thread started")
+
+
+# ── Shared load logic ─────────────────────────────────────────────
 async def _load_queue_from_file(save_path):
-    """Shared load logic used by both the API endpoint and auto-restore."""
     import execution
 
     if not os.path.exists(save_path):
@@ -542,7 +319,6 @@ async def _load_queue_from_file(save_path):
         extra_data = saved_item.get("extra_data", {})
         outputs_to_execute = saved_item.get("outputs_to_execute", [])
 
-        # Validate the prompt
         try:
             valid = await execution.validate_prompt(prompt_id, prompt, outputs_to_execute)
             is_valid = valid[0]
@@ -551,7 +327,6 @@ async def _load_queue_from_file(save_path):
             errors.append({"prompt_id": prompt_id, "error": str(e)})
 
         if not is_valid:
-            # Load it anyway but put on hold
             priority = HOLD_PRIORITY
             label = _extract_label(prompt)
             errors.append({
@@ -561,12 +336,8 @@ async def _load_queue_from_file(save_path):
             })
             held += 1
 
-        # Generate new prompt_id to avoid collisions
         new_prompt_id = str(uuid.uuid4())
-        # Update create_time so it sorts properly in time view
         extra_data["create_time"] = int(time.time() * 1000)
-
-        # Build the queue tuple and push it
         sort_key = _make_sort_key(priority)
         queue_item = (sort_key, new_prompt_id, prompt, extra_data, outputs_to_execute, {})
 
@@ -576,21 +347,236 @@ async def _load_queue_from_file(save_path):
 
         loaded += 1
 
-    # Notify the UI
     pq.server.queue_updated()
-
     logging.info(f"{LOG_PREFIX} Loaded {loaded} items ({held} on hold)")
-    return {
-        "ok": True,
-        "loaded": loaded,
-        "held": held,
-        "errors": errors,
+    return {"ok": True, "loaded": loaded, "held": held, "errors": errors}
+
+
+# ── Auto-restore on startup ──────────────────────────────────────
+_restore_message = None
+
+
+def _schedule_auto_restore():
+    global _restore_message
+
+    if not os.path.exists(_AUTO_BACKUP_PATH):
+        logging.info(f"{LOG_PREFIX} No auto-backup found")
+        _start_backup_thread()
+        return
+
+    try:
+        with open(_AUTO_BACKUP_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("item_count", 0) == 0:
+            logging.info(f"{LOG_PREFIX} Auto-backup is empty")
+            _start_backup_thread()
+            return
+    except Exception:
+        _start_backup_thread()
+        return
+
+    async def _do_restore():
+        global _restore_message
+        await asyncio.sleep(3)
+        _install_patch()
+
+        # Re-read file right before restoring (backup thread may have updated it)
+        try:
+            with open(_AUTO_BACKUP_PATH, "r", encoding="utf-8") as f:
+                check = json.load(f)
+            if check.get("item_count", 0) == 0:
+                logging.info(f"{LOG_PREFIX} Auto-backup now empty — skipping restore")
+                return
+        except Exception:
+            return
+
+        # Pause, then load
+        set_paused(True)
+        result = await _load_queue_from_file(_AUTO_BACKUP_PATH)
+
+        if result.get("ok") and result.get("loaded", 0) > 0:
+            loaded = result.get("loaded", 0)
+            held = result.get("held", 0)
+            msg = f"Restored {loaded} item(s) from backup. Queue is paused."
+            if held > 0:
+                msg += f"\n{held} item(s) failed validation and are on hold."
+            _restore_message = msg
+            logging.info(f"{LOG_PREFIX} {msg}")
+        else:
+            # Nothing loaded — unpause
+            set_paused(False)
+            if not result.get("ok"):
+                logging.warning(f"{LOG_PREFIX} Auto-restore failed: {result.get('error')}")
+            else:
+                logging.info(f"{LOG_PREFIX} No items to restore")
+
+        # Now safe to start the backup thread
+        _start_backup_thread()
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(_do_restore())
+        logging.info(f"{LOG_PREFIX} Auto-restore scheduled")
+    except Exception as e:
+        logging.warning(f"{LOG_PREFIX} Could not schedule auto-restore: {e}")
+
+
+_schedule_auto_restore()
+
+
+# ── API routes ────────────────────────────────────────────────────
+@PromptServer.instance.routes.get("/queue_control/status")
+async def qc_status(request):
+    global _restore_message
+    msg = _restore_message
+    _restore_message = None
+    resp = {"paused": is_paused(), "patch_installed": _patch_installed}
+    if msg:
+        resp["restore_message"] = msg
+    return web.json_response(resp)
+
+
+@PromptServer.instance.routes.post("/queue_control/pause")
+async def qc_pause(request):
+    _install_patch()
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    paused = data.get("paused")
+    if paused is None:
+        set_paused(not is_paused())
+    else:
+        set_paused(bool(paused))
+    return web.json_response({"paused": is_paused(), "patch_installed": _patch_installed})
+
+
+@PromptServer.instance.routes.get("/queue_control/queue")
+async def qc_queue_list(request):
+    _install_patch()
+    pq = PromptServer.instance.prompt_queue
+    with pq.mutex:
+        items = []
+        sorted_queue = sorted(pq.queue, key=lambda x: x[0])
+        for pos, item in enumerate(sorted_queue):
+            prompt = item[2] if len(item) > 2 else {}
+            extra_data = item[3] if len(item) > 3 else {}
+            items.append({
+                "position": pos + 1,
+                "prompt_id": item[1],
+                "priority": _get_priority(item),
+                "create_time": extra_data.get("create_time", 0),
+                "label": _extract_label(prompt),
+            })
+        running = []
+        for task_id, item in pq.currently_running.items():
+            prompt = item[2] if len(item) > 2 else {}
+            extra_data = item[3] if len(item) > 3 else {}
+            running.append({
+                "prompt_id": item[1],
+                "create_time": extra_data.get("create_time", 0),
+                "label": _extract_label(prompt),
+            })
+    return web.json_response({"paused": is_paused(), "running": running, "queued": items})
+
+
+@PromptServer.instance.routes.post("/queue_control/priority")
+async def qc_set_priority(request):
+    _install_patch()
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    prompt_id = data.get("prompt_id")
+    new_priority = data.get("priority")
+    if prompt_id is None or new_priority is None:
+        return web.json_response({"error": "Need prompt_id and priority"}, status=400)
+    new_priority = int(new_priority)
+    if new_priority < 0 or new_priority > 9:
+        return web.json_response({"error": "Priority must be 0-9"}, status=400)
+
+    pq = PromptServer.instance.prompt_queue
+    with pq.mutex:
+        target_idx = None
+        for i, item in enumerate(pq.queue):
+            if item[1] == prompt_id:
+                target_idx = i
+                break
+        if target_idx is None:
+            return web.json_response({"error": "Item not found in queue"}, status=404)
+        if new_priority == 0:
+            for i, item in enumerate(pq.queue):
+                if _get_priority(item) == 0 and item[1] != prompt_id:
+                    old_seq = _get_sequence(item)
+                    pq.queue[i] = (_make_sort_key(1, old_seq),) + item[1:]
+        target_item = pq.queue[target_idx]
+        old_seq = _get_sequence(target_item)
+        pq.queue[target_idx] = (_make_sort_key(new_priority, old_seq),) + target_item[1:]
+        heapq.heapify(pq.queue)
+        pq.server.queue_updated()
+        pq.not_empty.notify()
+
+    logging.info(f"{LOG_PREFIX} Set {prompt_id[:8]}... to priority {new_priority}")
+    return web.json_response({"ok": True, "prompt_id": prompt_id, "priority": new_priority})
+
+
+@PromptServer.instance.routes.post("/queue_control/save")
+async def qc_save(request):
+    _install_patch()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    include_running = data.get("include_running", False)
+    pq = PromptServer.instance.prompt_queue
+    save_items = []
+    with pq.mutex:
+        for item in pq.queue:
+            save_items.append({
+                "priority": _get_priority(item),
+                "prompt_id": item[1],
+                "prompt": item[2] if len(item) > 2 else {},
+                "extra_data": item[3] if len(item) > 3 else {},
+                "outputs_to_execute": item[4] if len(item) > 4 else [],
+            })
+        if include_running:
+            for task_id, item in pq.currently_running.items():
+                save_items.append({
+                    "priority": _get_priority(item),
+                    "prompt_id": item[1],
+                    "prompt": item[2] if len(item) > 2 else {},
+                    "extra_data": item[3] if len(item) > 3 else {},
+                    "outputs_to_execute": item[4] if len(item) > 4 else [],
+                    "was_running": True,
+                })
+    save_data = {
+        "version": 1,
+        "saved_at": int(time.time() * 1000),
+        "item_count": len(save_items),
+        "items": save_items,
     }
+    save_path = os.path.join(_EXTENSION_DIR, "saved_queue.json")
+    try:
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(save_data, f, indent=2)
+        logging.info(f"{LOG_PREFIX} Saved {len(save_items)} items to {save_path}")
+        return web.json_response({"ok": True, "count": len(save_items), "path": save_path})
+    except Exception as e:
+        logging.error(f"{LOG_PREFIX} Save failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/queue_control/load")
+async def qc_load(request):
+    _install_patch()
+    result = await _load_queue_from_file(os.path.join(_EXTENSION_DIR, "saved_queue.json"))
+    if "error" in result:
+        return web.json_response(result, status=result.get("status", 500))
+    return web.json_response(result)
 
 
 @PromptServer.instance.routes.get("/queue_control/has_save")
 async def qc_has_save(request):
-    """Check if a saved queue file exists."""
     save_path = os.path.join(_EXTENSION_DIR, "saved_queue.json")
     exists = os.path.exists(save_path)
     info = {}
@@ -603,59 +589,3 @@ async def qc_has_save(request):
         except Exception:
             pass
     return web.json_response({"exists": exists, **info})
-
-# ── Auto-restore on startup ──────────────────────────────────────
-import asyncio
-
-
-def _schedule_auto_restore():
-    """Schedule auto-restore to run once the event loop is available."""
-    global _restore_message
-
-    if not os.path.exists(_AUTO_BACKUP_PATH):
-        logging.info(f"{LOG_PREFIX} No auto-backup found — nothing to restore")
-        return
-
-    # Check if backup has any items
-    try:
-        with open(_AUTO_BACKUP_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if data.get("item_count", 0) == 0:
-            logging.info(f"{LOG_PREFIX} Auto-backup is empty — nothing to restore")
-            return
-    except Exception:
-        return
-
-    # Pause IMMEDIATELY so nothing runs before restore completes
-    set_paused(True)
-    logging.info(f"{LOG_PREFIX} Pre-paused queue for auto-restore")
-
-    async def _do_restore():
-        global _restore_message
-        # Small delay to let ComfyUI finish initializing
-        await asyncio.sleep(3)
-        _install_patch()
-        # Pause before restoring so nothing starts running
-        set_paused(True)
-        result = await _load_queue_from_file(_AUTO_BACKUP_PATH)
-        if result.get("ok"):
-            loaded = result.get("loaded", 0)
-            held = result.get("held", 0)
-            msg = f"Restored {loaded} item(s) from backup. Queue is paused."
-            if held > 0:
-                msg += f"\n{held} item(s) failed validation and are on hold."
-            _restore_message = msg
-            logging.info(f"{LOG_PREFIX} {msg}")
-        else:
-            logging.warning(f"{LOG_PREFIX} Auto-restore failed: {result.get('error')}")
-
-    # Get the running event loop and schedule the restore
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(_do_restore())
-        logging.info(f"{LOG_PREFIX} Auto-restore scheduled")
-    except Exception as e:
-        logging.warning(f"{LOG_PREFIX} Could not schedule auto-restore: {e}")
-
-
-_schedule_auto_restore()

@@ -58,26 +58,50 @@ This is mainly for the restart scenario: save your queue, restart ComfyUI, load 
 
 ### Persistent Queueing (Auto-save)
 
+I saved the best for (second to) last. After some discussions with the Reddit community, it became clear that I missed a big feature. Version 1.1.0 now auto-saves the queue and will automatically restore it upon restart. If you have loaded the queue and your ComfyUI server fails for any reason (like when Windows just arbitrarily decided to update your system while you were sleeping) your queue will be restored when you restart. If it detects an unfinished queue and restores things, QueueControl will pause the queue and let you know what's going on.
+
 ![AutoRecover](images/AutoRecover.png)
 
-I saved the best for (second to) last. After some discussions with the Reddit community, it became clear that I missed a big feature. Version 1.1.0 now auto-saves the queue and will automatically restore it upon restart. If you have loaded the queue and your ComfyUI server fails for any reason (like when Windows just arbitrarily decided to update your system while you were sleeping) your queue will be restored when you restart. If it detects an unfinished queue and restores things, QueueControl will pause the queue and let you know what's going on. This gives you a chance to think about what you want to do. Remember that you have the option to save it using the explicit save, so that id you had a lot of "overnight runs" that didn't complete you can save the queue and restart everything when the timing is better.
+This gives you a chance to think about what you want to do. Remember that you have the option to save it using the explicit save, so that id you had a lot of "overnight runs" that didn't complete you can save the queue and restart everything when the timing is better.
 
 **SECURITY WARNING:** (The same note as queue saving.) The queue gets saved into the ComfyUI/custom_nodes/ComfyUI-QueueControl directory unencrypted. If you are the only user of the environment then no worries. However, if this is a shared machine the workflows in the queue could be exposed to other users which might be delicate for some users.
 
 ### Queue Label Node
 
-![QueueLabelNode](images/QueueLabelNode.png)
+![QueueLabelNode](images/QueueLabelNode2.png)
 
-One of the other frustrating things about the ComfyUI Queue is that it's very difficult to tell what job is what. I created this node to hep with that but it's only somewhat useful depending on what you are doing. The real issue is that most of the useful information that exists to identify a job only exists after it starts running, but not while it is waiting in the queue. (That's useful for other reasons but not for this.) The Queue Label node is a stand alone and doesn't need to be connected to anything. 
+One of the other frustrating things about the ComfyUI Queue is that it's very difficult to tell what job is what. I created this node to hep with that but it's only somewhat useful depending on what you are doing. The real issue is that most of the useful information that exists to identify a job only exists after it starts running, but not while it is waiting in the queue. (That's useful for other reasons but not for this.) The Queue Label node is a stand alone and doesn't need to be connected to anything.
 
 **Queue Label** is simple node (under the **QueueControl** category) that **optionally** gives your workflow a name in the queue panel. It has two inputs:
 
 - **label** — A text field you type into. This is whatever note you want to leave yourself. (This can also be connected to a node.)
-- **info** — An optional input that accepts any type (string, number, etc.). Connect it to another node's output to include dynamic info.
+- **info** — Optional inputs that accepts any type (string, number, etc.). Connect it to another node's output to include dynamic info.
 
-If both are filled in, the panel shows like "Thing in the field (Thing input to info port)" . Without the node, jobs show a truncated ID. If you use an external seed generator, that will fill in. If you connect an empty latent output, you'll get the width of the latent, but if you connect to a final latent, you'll *probably* get the first parameter of whatever KSampler you're using. If you attach to the model/text encoder/VAE loader to with get the name of the model/VAE. Maybe the most useful thing is to attach to the Conditioning port, in which case the ***entire*** prompt will show up. That can obviously get crowded on the queue list, but its a fairly unique identifier. Also remember that you can connect directly to the label widget so you could have 2 "automatically" generated labels. My best advice it to play around with it and see what woks for you. There are so many variations of workflows that it's hard to give exact guidance.
+If both are filled in, the panel shows like "Thing in info | Thing in info2 (Thing input to info port)" . Without the node, jobs show a truncated ID. 
 
-**Note again:** The info input can only display values that are already written in the workflow at queue time - typed text, dropdown selections, fixed numbers. Anything that requires a node to compute (reading a file, generating a random number, processing text) won't be available because it hasn't executed yet.
+**How to use the Queue Label node:**
+
+I wanted this to be simple, but I also wanted it to be useful. So using this node effectively takes a few minutes to lean but it at least for me, it's very useful. First, you need to know a but about what information is available at submission time. For an example, l will use the KSampler (Advanced:)
+
+![KSampler](images/KSampler.png)
+
+So how do I get "sampler_name" into my info port?
+
+Well, you start by connecting the LATENT port into the Queue Label node, then figure out which index the the right one. The is no hard and fast rule here but, the **<u>output indices are usually in the same order they are on the node and the indices always start at 0.</u>** So in our example above, what is index is "sampler_name"? 5? No, it's not 5. It's a trick question, because even though "sampler_name" is the 6th widget down, and indices start at 0, "control after generate" is skipped. It doesn't matter why, that's just how it is. To get "sampler_name" from that LATENT port, it's index 4 (as in the example).
+
+So this is how I actually use it (and yes, I know it sounds "kludge-y"):
+
+1. Set everything up the way I think it needs to be setup.
+2. Pause the queue
+3. Submit a job and check the Queue Control interface to see if the information is that way you want it.
+4. If it's good, congratulations and move on.
+5. If it's not, adjust the node and repeat steps 3-5 until I get what I want.
+
+(1-5 is all encapsulated in "Just paly around with it. It's ComfyUI.")
+
+Why I find this so useful: You can attach a lot of information to this. You can list the model, the image size, the sampler, the scheduler, etc. For scanning through jobs and deciding which ones run sooner than later, this is about the only wany to get it organized. 
+
+**Note again:** The info input can only display values that are already written in the workflow at queue time - typed text, dropdown selections, fixed numbers. Anything that requires a node to compute (reading a file, generating a random number, processing text, computing a formula) won't be available because it hasn't executed yet.
 
 ## Installation
 
@@ -116,6 +140,8 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 ```
 1.0.3	Fixed bug where clicking on the Queue button immmediatley after submit set all priorites to 0.
 1.1.0	Added Persistent Queuing.
+1.1.9	Added queue polling ever 2 seconds to force syncing in case of ip disruption on a remote setup.
+1.1.14	Redesign the Queue Label node.
 ```
 
 

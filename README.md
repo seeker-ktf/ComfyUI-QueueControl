@@ -141,7 +141,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 1.0.3	Fixed bug where clicking on the Queue button immmediatley after submit set all priorites to 0.
 1.1.0	Added Persistent Queuing.
 1.1.9	Added queue polling ever 2 seconds to force syncing in case of ip disruption on a remote setup.
-1.1.14	Redesign the Queue Label node.
+1.2.1	Redesign the Queue Label node and redesign Persistent Queuing. Vesrion bump.
 ```
 
 

@@ -109,17 +109,12 @@ def _install_patch():
                     return (item, i)
 
         def _patched_put(self, item):
-            # Negative or zero number means shift+click "send to front" — map to priority 0
-            priority = 0 if item[0] <= 0 else DEFAULT_PRIORITY
-            new_item = (_make_sort_key(priority),) + item[1:]
+            if item[0] <= 0:
+                # Shift+click "send to front" — preserve original negative number
+                new_item = item
+            else:
+                new_item = (_make_sort_key(DEFAULT_PRIORITY),) + item[1:]
             with self.mutex:
-                # Enforce only-one-zero rule
-                if priority == 0:
-                    for i, q_item in enumerate(self.queue):
-                        if _get_priority(q_item) == 0:
-                            old_seq = _get_sequence(q_item)
-                            self.queue[i] = (_make_sort_key(1, old_seq),) + q_item[1:]
-                    heapq.heapify(self.queue)
                 heapq.heappush(self.queue, new_item)
                 self.server.queue_updated()
                 self.not_empty.notify()
@@ -470,10 +465,11 @@ async def qc_queue_list(request):
         for pos, item in enumerate(sorted_queue):
             prompt = item[2] if len(item) > 2 else {}
             extra_data = item[3] if len(item) > 3 else {}
+            is_front = item[0] < PRIORITY_MULTIPLIER and item[0] <= 0
             items.append({
                 "position": pos + 1,
                 "prompt_id": item[1],
-                "priority": _get_priority(item),
+                "priority": -1 if is_front else _get_priority(item),
                 "create_time": extra_data.get("create_time", 0),
                 "label": _extract_label(prompt),
             })

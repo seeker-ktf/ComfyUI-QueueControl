@@ -32,6 +32,14 @@ The Queue priorities go from **0** to **9**. Every job enters the queue at prior
 
 The queue panel shows all jobs with **▲/▼** buttons to nudge priority, a **Next** button to jump straight to priority 0, and a **Hold** button to set priority 9.
 
+**Special note to Shift+Run submissions:** 
+
+There is a feature in ComfyUI that allows a "jump to the front" already. If you press the Run button while holding the Shift key that job will be the next one run, unless you Shift+Run another job before the fist one runs, and so on. QueueControl respects the Shift+Run requirement, and those jobs will show up in the queue highlighted in green with an "F" label like this:
+
+![SaveRestoreQueue](images/FStatus.png)
+
+If you leave everything alone after that, it will run in the "legacy" order. Note that that the "F" jobs are special. <u>If you try to reorder an "F" job through QueueControl, it will lose it's special "F" status and move to priority 1 without being able to go back.</u>
+
 ### Sort Toggle
 
 ![ByTime](images/ByTime.png) ![ByPriority](images/ByPriority.png)
@@ -143,6 +151,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 1.1.9	Added queue polling ever 2 seconds to force syncing in case of ip disruption on a remote setup.
 1.2.1	Redesign the Queue Label node and redesign Persistent Queuing. Vesrion bump.
 1.2.2	Fix logic where shift+Run was not setting the job to 0 priority.
+1.3.0	Added extra handeling for shift+Run submission.
 ```
 
 

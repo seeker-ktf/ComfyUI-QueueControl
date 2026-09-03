@@ -391,12 +391,13 @@ app.registerExtension({
                     for (const item of sorted) {
                         const isHold = item.priority === 9;
                         const isNext = item.priority === 0;
+                        const isFront = item.priority === -1;
                         const isFlash = item.prompt_id === lastChangedId;
                         let cls = "qc-item";
                         if (isHold) cls += " hold";
-                        else if (isNext) cls += " next";
+                        else if (isNext || isFront) cls += " next";
                         if (isFlash) cls += " flash";
-                        const priLabel = isHold ? "H" : item.priority;
+                        const priLabel = isHold ? "H" : isFront ? "F" : item.priority;
                         const timeStr = item.create_time ? formatTime(item.create_time) : "";
                         const name = item.label || item.prompt_id.substring(0, 8) + "...";
 
@@ -406,8 +407,8 @@ app.registerExtension({
                                 <div class="qc-item-time">${timeStr}</div>
                             </div>
                             <div class="qc-priority-controls">
-                                ${!isNext ? `<button class="qc-next-btn" data-id="${item.prompt_id}" data-action="next" title="Run next">Next</button>` : ""}
-                                <button class="qc-pri-btn" data-id="${item.prompt_id}" data-action="up" title="Higher priority">▲</button>
+                                ${!isNext && !isFront ? `<button class="qc-next-btn" data-id="${item.prompt_id}" data-action="next" title="Run next">Next</button>` : ""}
+                                ${!isFront ? `<button class="qc-pri-btn" data-id="${item.prompt_id}" data-action="up" title="Higher priority">▲</button>` : ""}
                                 <span class="qc-pri-num">${priLabel}</span>
                                 <button class="qc-pri-btn" data-id="${item.prompt_id}" data-action="down" title="Lower priority">▼</button>
                                 <button class="qc-hold-btn ${isHold ? 'held' : ''}" data-id="${item.prompt_id}" data-action="hold">${isHold ? "Unhold" : "Hold"}</button>
@@ -432,7 +433,8 @@ app.registerExtension({
                             const newPri = Math.max(0, item.priority - 1);
                             await setPriority(id, newPri);
                         } else if (action === "down") {
-                            const newPri = Math.min(8, item.priority + 1);
+                            // Front items convert to priority 1 on down
+                            const newPri = item.priority === -1 ? 1 : Math.min(8, item.priority + 1);
                             await setPriority(id, newPri);
                         } else if (action === "hold") {
                             const newPri = item.priority === 9 ? 5 : 9;

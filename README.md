@@ -142,6 +142,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 1.1.0	Added Persistent Queuing.
 1.1.9	Added queue polling ever 2 seconds to force syncing in case of ip disruption on a remote setup.
 1.2.1	Redesign the Queue Label node and redesign Persistent Queuing. Vesrion bump.
+1.2.2	Fix logic where shift+Run was not setting the job to 0 priority.
 ```
 
 

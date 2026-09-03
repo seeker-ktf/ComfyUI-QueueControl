@@ -109,8 +109,17 @@ def _install_patch():
                     return (item, i)
 
         def _patched_put(self, item):
-            new_item = (_make_sort_key(DEFAULT_PRIORITY),) + item[1:]
+            # Negative or zero number means shift+click "send to front" — map to priority 0
+            priority = 0 if item[0] <= 0 else DEFAULT_PRIORITY
+            new_item = (_make_sort_key(priority),) + item[1:]
             with self.mutex:
+                # Enforce only-one-zero rule
+                if priority == 0:
+                    for i, q_item in enumerate(self.queue):
+                        if _get_priority(q_item) == 0:
+                            old_seq = _get_sequence(q_item)
+                            self.queue[i] = (_make_sort_key(1, old_seq),) + q_item[1:]
+                    heapq.heapify(self.queue)
                 heapq.heappush(self.queue, new_item)
                 self.server.queue_updated()
                 self.not_empty.notify()

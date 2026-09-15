@@ -1,6 +1,6 @@
 # ComfyUI-QueueControl
 
-A ComfyUI extension helper for the bult-in Queue Manager that gives you more control over the job queue. You can pause/resume, change the run order, hold individual items, and save/load the entire queue to disk that survives a restart/reboot.
+A ComfyUI extension helper for the bult-in Queue Manager that gives you more control over the job queue. You can pause/resume, change the run order, hold individual items, and save/load the entire queue to disk that survives a restart/reboot. <u>This plugin does not load any dependencies.</u> If your ComfyUI broke, it's not this! :) 
 
 ![Queue Control](images/QuereControl.png)
 
@@ -24,13 +24,20 @@ This is useful for more than just stopping the queue. If your workflow reads fro
 
 This happens to me a lot: I submit 2/4/16/32 jobs and almost right away I realize that I want to run something quickly for a different project. With the priority system, you can submit a new job to the queue and bump it to the top. You can also set some jobs to be at the bottom so that they only run if there's nothing left ahead of it.
 
-The Queue priorities go from **0** to **9**. Every job enters the queue at priority **5** (middle of the range). 
+The Queue priorities go from **0** to **8**. Every job enters the queue at priority **5**. 
 
 - **0** — Runs next, no matter what. Only one job can be priority 0 at any given time. Setting a new one bumps the old one to 1.
 - **1–8** — Normal priorities. Lower number runs first. Within each numbered priority it goes back to first in, first out.
-- **9** — On hold. Will not run even if the queue is otherwise empty. This is good for when you are stacking up jobs are are heading to lunch or bed or whatever in an hour but want to work on something else until then.
 
-The queue panel shows all jobs with **▲/▼** buttons to nudge priority, a **Next** button to jump straight to priority 0, and a **Hold** button to set priority 9.
+The queue navigation buttons have been updated to be more intuitive.
+
+![QuereControlCrop](images/QuereControlCrop.png)
+
+The up ![SingleUp](images/Singleup.png) and down ![SingledOWN](images/SingleDown.png) arrows will move the priority up or down 1 number. (Note that when changing priorities, sorting by submission time will let be easier and the job won't "jump" away.) The Double Up ![DoubleUp](images/Doubleup.png) and Double Down ![DoubleDown](images/DoubleDown.png) arrows will move the job to the top or bottom of the numbered queue (0 or 8).
+
+The pause job button ![PauseJob](images/PauseJob.png) will set an individual job on hold. It will be dimmed in the interface with a red lowlight. Paused jobs will never run regardless of the status of the main queue. This is great for submitting long running jobs that you want to run later and are away from the computer (sleeping, showering, long walks on the beach). Just like for the entire queue, when you pause a job the button will change to a run job button ![ReleaseJob](images/ReleaseJob.png)and pressing it will release the job.
+
+You can change the job priorities while jobs are paused so that when they release they will be in whatever order you want (Reddit request).
 
 **Special note to Shift+Run submissions:** 
 
@@ -40,11 +47,15 @@ There is a feature in ComfyUI that allows a "jump to the front" already. If you 
 
 If you leave everything alone after that, it will run in the "legacy" order. Note that that the "F" jobs are special. <u>If you try to reorder an "F" job through QueueControl, it will lose it's special "F" status and move to priority 1 without being able to go back.</u>
 
+**Another special note to Shift+Run submissions:** 
+
+ComfyUI creates these Shift+Run priorities in a cleaver way. It gives them a negative priority, starting with -1, -2, -3, etc. While it's active ComfyUI keeps a counter of the last Shift+Run job and interments as necessary, forever. However, the counter resets every time you restart the server and because of that, it can make a conflict for the features below regarding saved/persistent queuing because when you load a saved queue, if it has an negative priorities it will conflict with any new Shift+Run jobs you submit. Therefore QueueControl immediately converts and restored negative priorities to 1 and moves on. 
+
 ### Sort Toggle
 
 ![ByTime](images/ByTime.png) ![ByPriority](images/ByPriority.png)
 
-The panel can display jobs sorted **By Time** (submission order) or **By Priority** (execution order). Time sort is the default — items stay in place while you change priorities, so you don't lose track of what you're editing. Setting the priorities is ***very*** rudimentary so take your time.
+The panel can display jobs sorted **By Time** (submission order) or **By Priority** (execution order). Time sort is the default — items stay in place while you change priorities, so you don't lose track of what you're editing. Setting the priorities is ***very*** rudimentary so take your time. The selection of this is persistent; if you have a favorite way to look, it will be that way the next time you dome back (Reddit request).
 
 ### Save / Load Queue
 
@@ -62,7 +73,7 @@ This is mainly for the restart scenario: save your queue, restart ComfyUI, load 
 
 **SECURITY WARNING:** The queue gets saved into the ComfyUI/custom_nodes/ComfyUI-QueueControl directory unencrypted. If you are the only user of the environment then no worries. However, if this is a shared machine the workflows in the queue could be exposed to other users which might be delicate for some users.
 
-<u>Also note:</u> there is only one copy of the file. It was not intended to keep a lot of queues and I didn't want to always have to futz with names/opening a file every time. Having said that, I have been going over tot hat directory and doing all sorts of copy/rename/editing on the saved queues. 
+<u>Also note:</u> there is only one copy of the file. It was not intended to keep a lot of queues and I didn't want to always have to futz with names/opening a file every time. Having said that, I have been going over to that directory and doing all sorts of copy/rename/editing on the saved queues. 
 
 ### Persistent Queueing (Auto-save)
 
@@ -152,6 +163,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 1.2.1	Redesign the Queue Label node and redesign Persistent Queuing. Vesrion bump.
 1.2.2	Fix logic where shift+Run was not setting the job to 0 priority.
 1.3.0	Added extra handeling for shift+Run submission.
+1.4.0	General reworking of the Queue Panel, added some reuested features, but fix (Shift+Run) 
 ```
 
 

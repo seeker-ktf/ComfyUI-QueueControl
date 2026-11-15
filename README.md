@@ -61,7 +61,7 @@ The panel can display jobs sorted **By Time** (submission order) or **By Priorit
 
 ![DeleteJobQueue](images/DeleteJobQueue.png)
 
-A new button was added for deleting individual jobs from the queue. Pressing the Trashcan button![DeleteJob](images/DeleteJob.png)will remove that job before it runs. Warning: there is no "Are you sure?" safety net. The button has been moved away from the queue buttons to minimize mis-presses, but once it is pressed the job is gone so be careful. 
+A new button was added for deleting individual jobs from the queue. Pressing the Trashcan button ![DeleteJob](images/DeleteJob.png) will remove that job before it runs. Warning: there is no "Are you sure?" safety net. The button has been moved away from the queue buttons to minimize mis-presses, but once it is pressed the job is gone so be careful. 
 
 
 

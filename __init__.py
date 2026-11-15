@@ -525,6 +525,34 @@ async def qc_set_priority(request):
     return web.json_response({"ok": True, "prompt_id": prompt_id, "priority": new_priority})
 
 
+@PromptServer.instance.routes.post("/queue_control/delete")
+async def qc_delete(request):
+    _install_patch()
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    prompt_id = data.get("prompt_id")
+    if not prompt_id:
+        return web.json_response({"error": "Need prompt_id"}, status=400)
+
+    pq = PromptServer.instance.prompt_queue
+    with pq.mutex:
+        target_idx = None
+        for i, item in enumerate(pq.queue):
+            if item[1] == prompt_id:
+                target_idx = i
+                break
+        if target_idx is None:
+            return web.json_response({"error": "Item not found in queue"}, status=404)
+        pq.queue.pop(target_idx)
+        heapq.heapify(pq.queue)
+        pq.server.queue_updated()
+
+    logging.info(f"{LOG_PREFIX} Deleted {prompt_id[:8]}... from queue")
+    return web.json_response({"ok": True, "prompt_id": prompt_id})
+
+
 @PromptServer.instance.routes.post("/queue_control/save")
 async def qc_save(request):
     _install_patch()

@@ -57,6 +57,14 @@ ComfyUI creates these Shift+Run priorities in a cleaver way. It gives them a neg
 
 The panel can display jobs sorted **By Time** (submission order) or **By Priority** (execution order). Time sort is the default — items stay in place while you change priorities, so you don't lose track of what you're editing. Setting the priorities is ***very*** rudimentary so take your time. The selection of this is persistent; if you have a favorite way to look, it will be that way the next time you dome back (Reddit request).
 
+### Delete Job From Queue
+
+![DeleteJobQueue](images/DeleteJobQueue.png)
+
+A new button was added for deleting individual jobs from the queue. Pressing the Trashcan button![DeleteJob](images/DeleteJob.png)will remove that job before it runs. Warning: there is no "Are you sure?" safety net. The button has been moved away from the queue buttons to minimize mis-presses, but once it is pressed the job is gone so be careful. 
+
+
+
 ### Save / Load Queue
 
 ![SaveRestoreQueue](images/SaveRestoreQueue.png)
@@ -164,6 +172,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 1.2.2	Fix logic where shift+Run was not setting the job to 0 priority.
 1.3.0	Added extra handeling for shift+Run submission.
 1.4.0	General reworking of the Queue Panel, added some reuested features, but fix (Shift+Run) 
+1.5.0	Added delete button, other background issues. Fix for legacy API (Issue #2).
 ```
 
 

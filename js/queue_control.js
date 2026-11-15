@@ -17,11 +17,6 @@ const STYLE = `
     position: fixed;
     z-index: 99999;
 }
-.qc-popup h3 {
-    margin: 0 0 10px 0;
-    font-size: 15px;
-    font-weight: 600;
-}
 .qc-empty {
     color: var(--descrip-text, #999);
     font-style: italic;
@@ -72,7 +67,7 @@ const STYLE = `
     gap: 3px;
     flex-shrink: 0;
 }
-.qc-pri-btn {
+.qc-icon-btn {
     width: 24px;
     height: 24px;
     border: 1px solid var(--border-color, #555);
@@ -85,43 +80,32 @@ const STYLE = `
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0;
 }
-.qc-pri-btn:hover {
+.qc-icon-btn:hover {
     background: var(--border-color, #555);
+}
+.qc-icon-btn.green {
+    background: #2a7a2a;
+    border-color: #3a9a3a;
+    color: #fff;
+}
+.qc-icon-btn.green:hover {
+    background: #349a34;
+}
+.qc-icon-btn.red {
+    background: #b33;
+    border-color: #d44;
+    color: #fff;
+}
+.qc-icon-btn.red:hover {
+    background: #c44;
 }
 .qc-pri-num {
     width: 20px;
     text-align: center;
     font-weight: bold;
     font-size: 14px;
-}
-.qc-hold-btn {
-    padding: 2px 6px;
-    border: 1px solid var(--border-color, #555);
-    border-radius: 3px;
-    background: var(--comfy-input-bg, #444);
-    color: var(--fg-color, #ddd);
-    cursor: pointer;
-    font-size: 11px;
-}
-.qc-hold-btn:hover {
-    background: #b33;
-}
-.qc-hold-btn.held {
-    background: #b33;
-    border-color: #d44;
-}
-.qc-next-btn {
-    padding: 2px 6px;
-    border: 1px solid #3a9a3a;
-    border-radius: 3px;
-    background: rgba(42, 122, 42, 0.4);
-    color: var(--fg-color, #ddd);
-    cursor: pointer;
-    font-size: 11px;
-}
-.qc-next-btn:hover {
-    background: #2a7a2a;
 }
 .qc-toolbar {
     display: flex;
@@ -202,11 +186,26 @@ function formatTime(ms) {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function escapeHtml(str) {
+    if (!str) return str;
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 app.registerExtension({
     name: "ComfyUI.QueueControl",
 
     async setup() {
-        // Inject styles
+        // Icon SVGs
+        const ICONS = {
+            chevronsUp: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 11 12 6 17 11"/><polyline points="7 17 12 12 17 17"/></svg>`,
+            chevronUp: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>`,
+            chevronDown: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+            chevronsDown: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 7 12 12 17 7"/><polyline points="7 13 12 18 17 13"/></svg>`,
+            pause: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`,
+            play: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>`,
+            trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+        };
+
         const styleEl = document.createElement("style");
         styleEl.textContent = STYLE;
         document.head.appendChild(styleEl);
@@ -215,38 +214,40 @@ app.registerExtension({
         let popupEl = null;
         let popupVisible = false;
         let refreshInterval = null;
-        let sortByTime = true;  // true = by submission time, false = by priority
-        let lastChangedId = null;  // track which item was just changed
+        let sortByTime = true;
+        let lastChangedId = null;
+        let pauseBtnRef = null;
 
-        // Fetch initial state — check for restore notification
+        // Load config
+        try {
+            const resp = await fetch("/queue_control/config");
+            const cfg = await resp.json();
+            if (cfg.sort_by_time !== undefined) sortByTime = cfg.sort_by_time;
+        } catch (e) {}
+
+        // Fetch initial state
         try {
             const resp = await fetch("/queue_control/status");
             const data = await resp.json();
             paused = data.paused;
             if (data.restore_message) {
-                // Show popup after a short delay so the UI is ready
                 setTimeout(() => alert(data.restore_message), 500);
             }
         } catch (e) {
             console.warn("[QueueControl] Could not fetch initial status:", e);
         }
 
-        // Poll for restore message (restore happens ~3s after startup,
-        // JS may have loaded before it completes)
+        // Poll for restore message
         let restoreCheckCount = 0;
         const restoreChecker = setInterval(async () => {
             restoreCheckCount++;
-            if (restoreCheckCount > 10) {
-                clearInterval(restoreChecker);
-                return;
-            }
+            if (restoreCheckCount > 10) { clearInterval(restoreChecker); return; }
             try {
                 const resp = await fetch("/queue_control/status");
                 const data = await resp.json();
                 if (data.restore_message) {
                     clearInterval(restoreChecker);
                     paused = data.paused;
-                    // Update pause button if it exists
                     if (pauseBtnRef) {
                         pauseBtnRef.icon = "play";
                         pauseBtnRef.content = "Resume";
@@ -258,12 +259,10 @@ app.registerExtension({
             } catch (e) {}
         }, 2000);
 
-        let pauseBtnRef = null;
-
-        // ── Priority change ──────────────────────────────
+        // ── Priority / hold actions ──────────────────────
         async function setPriority(promptId, priority) {
+            lastChangedId = promptId;
             try {
-                lastChangedId = promptId;
                 await fetch("/queue_control/priority", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -275,13 +274,41 @@ app.registerExtension({
             }
         }
 
+        async function deleteItem(promptId) {
+            lastChangedId = null;
+            try {
+                await fetch("/queue_control/delete", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ prompt_id: promptId }),
+                });
+                await refreshPopup();
+            } catch (e) {
+                console.error("[QueueControl] Delete failed:", e);
+            }
+        }
+
+        async function setHold(promptId, hold) {
+            lastChangedId = promptId;
+            try {
+                await fetch("/queue_control/priority", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ prompt_id: promptId, priority: hold ? 9 : 5 }),
+                });
+                await refreshPopup();
+            } catch (e) {
+                console.error("[QueueControl] Hold change failed:", e);
+            }
+        }
+
         // ── Popup ────────────────────────────────────────
         function createPopup() {
             const el = document.createElement("div");
             el.className = "qc-popup";
             el.innerHTML = `<div class="qc-toolbar">
                 <h3 style="margin:0;font-size:15px;font-weight:600;">Queue Control</h3>
-                <button class="qc-sort-toggle">Sort: By Time</button>
+                <button class="qc-sort-toggle">Sort: ${sortByTime ? "By Time" : "By Priority"}</button>
             </div>
             <div class="qc-content"></div>
             <div class="qc-save-load">
@@ -290,13 +317,20 @@ app.registerExtension({
                 <label><input type="checkbox" class="qc-include-running"> Include running</label>
             </div>
             <div class="qc-status-area"></div>`;
-            // Sort toggle handler
-            el.querySelector(".qc-sort-toggle").addEventListener("click", (e) => {
+
+            el.querySelector(".qc-sort-toggle").addEventListener("click", async (e) => {
                 sortByTime = !sortByTime;
                 e.target.textContent = sortByTime ? "Sort: By Time" : "Sort: By Priority";
+                try {
+                    await fetch("/queue_control/config", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ sort_by_time: sortByTime }),
+                    });
+                } catch (err) {}
                 refreshPopup();
             });
-            // Save handler
+
             el.querySelector(".qc-save-btn").addEventListener("click", async () => {
                 const includeRunning = el.querySelector(".qc-include-running").checked;
                 const statusArea = el.querySelector(".qc-status-area");
@@ -315,16 +349,13 @@ app.registerExtension({
                 } catch (e) {
                     statusArea.innerHTML = `<div class="qc-status-msg error">Save failed</div>`;
                 }
-                // Reset the checkbox
                 el.querySelector(".qc-include-running").checked = false;
-                // Clear status after 5 seconds
                 setTimeout(() => { statusArea.innerHTML = ""; }, 5000);
             });
-            // Load handler
+
             el.querySelector(".qc-load-btn").addEventListener("click", async () => {
                 const statusArea = el.querySelector(".qc-status-area");
                 try {
-                    // Check if save exists first
                     const checkResp = await fetch("/queue_control/has_save");
                     const checkData = await checkResp.json();
                     if (!checkData.exists) {
@@ -353,6 +384,7 @@ app.registerExtension({
                 }
                 setTimeout(() => { statusArea.innerHTML = ""; }, 8000);
             });
+
             document.body.appendChild(el);
             return el;
         }
@@ -363,13 +395,11 @@ app.registerExtension({
             try {
                 const resp = await fetch("/queue_control/queue");
                 const data = await resp.json();
-
                 let html = "";
 
-                // Running jobs
                 if (data.running.length > 0) {
                     for (const job of data.running) {
-                        const name = job.label || job.prompt_id.substring(0, 8) + "...";
+                        const name = escapeHtml(job.label) || job.prompt_id.substring(0, 8) + "...";
                         html += `<div class="qc-running">
                             ▶ Running: ${name}
                             ${job.create_time ? " — queued " + formatTime(job.create_time) : ""}
@@ -377,51 +407,70 @@ app.registerExtension({
                     }
                 }
 
-                // Queued jobs
                 if (data.queued.length === 0) {
                     html += `<div class="qc-empty">Queue is empty</div>`;
                 } else {
-                    // Sort display order
                     const sorted = [...data.queued];
                     if (sortByTime) {
                         sorted.sort((a, b) => a.create_time - b.create_time);
                     }
-                    // else already sorted by priority from server
 
                     for (const item of sorted) {
-                        const isHold = item.priority === 9;
-                        const isNext = item.priority === 0;
+                        const isHeld = item.priority >= 9;
+                        const isNext = item.priority === 0 && !isHeld;
                         const isFront = item.priority === -1;
                         const isFlash = item.prompt_id === lastChangedId;
                         let cls = "qc-item";
-                        if (isHold) cls += " hold";
+                        if (isHeld) cls += " hold";
                         else if (isNext || isFront) cls += " next";
                         if (isFlash) cls += " flash";
-                        const priLabel = isHold ? "H" : isFront ? "F" : item.priority;
+                        const priLabel = isFront ? "F" : item.priority;
                         const timeStr = item.create_time ? formatTime(item.create_time) : "";
-                        const name = item.label || item.prompt_id.substring(0, 8) + "...";
+                        const name = escapeHtml(item.label) || item.prompt_id.substring(0, 8) + "...";
+
+                        // Build controls
+                        let controls = "";
+
+                        // Delete button (left side, before item info)
+                        let deleteBtn = `<button class="qc-icon-btn red" data-id="${item.prompt_id}" data-action="delete" title="Delete from queue">${ICONS.trash}</button>`;
+
+                        // Next button (double chevron up, green)
+                        controls += `<button class="qc-icon-btn green" data-id="${item.prompt_id}" data-action="next" title="Run next">${ICONS.chevronsUp}</button>`;
+
+                        // Up button
+                        controls += `<button class="qc-icon-btn" data-id="${item.prompt_id}" data-action="up" title="Higher priority">${ICONS.chevronUp}</button>`;
+
+                        // Priority number
+                        controls += `<span class="qc-pri-num">${priLabel}</span>`;
+
+                        // Down button
+                        controls += `<button class="qc-icon-btn" data-id="${item.prompt_id}" data-action="down" title="Lower priority">${ICONS.chevronDown}</button>`;
+
+                        // Bottom button (double chevron down, red)
+                        controls += `<button class="qc-icon-btn red" data-id="${item.prompt_id}" data-action="bottom" title="Send to bottom">${ICONS.chevronsDown}</button>`;
+
+                        // Hold/unhold button
+                        if (isHeld) {
+                            controls += `<button class="qc-icon-btn red" data-id="${item.prompt_id}" data-action="unhold" title="Release from hold">${ICONS.play}</button>`;
+                        } else {
+                            controls += `<button class="qc-icon-btn green" data-id="${item.prompt_id}" data-action="hold" title="Put on hold">${ICONS.pause}</button>`;
+                        }
 
                         html += `<div class="${cls}" data-prompt="${item.prompt_id}">
+                            ${deleteBtn}
                             <div class="qc-item-info">
                                 <div>${name} <span class="qc-item-id">${item.label ? item.prompt_id.substring(0, 8) + "..." : ""}</span></div>
                                 <div class="qc-item-time">${timeStr}</div>
                             </div>
-                            <div class="qc-priority-controls">
-                                ${!isNext && !isFront ? `<button class="qc-next-btn" data-id="${item.prompt_id}" data-action="next" title="Run next">Next</button>` : ""}
-                                ${!isFront ? `<button class="qc-pri-btn" data-id="${item.prompt_id}" data-action="up" title="Higher priority">▲</button>` : ""}
-                                <span class="qc-pri-num">${priLabel}</span>
-                                <button class="qc-pri-btn" data-id="${item.prompt_id}" data-action="down" title="Lower priority">▼</button>
-                                <button class="qc-hold-btn ${isHold ? 'held' : ''}" data-id="${item.prompt_id}" data-action="hold">${isHold ? "Unhold" : "Hold"}</button>
-                            </div>
+                            <div class="qc-priority-controls">${controls}</div>
                         </div>`;
                     }
                 }
 
                 content.innerHTML = html;
 
-                // Attach button handlers
                 content.querySelectorAll("[data-action]").forEach(btn => {
-                    btn.addEventListener("click", async (e) => {
+                    btn.addEventListener("click", async () => {
                         const id = btn.dataset.id;
                         const action = btn.dataset.action;
                         const item = data.queued.find(q => q.prompt_id === id);
@@ -433,12 +482,16 @@ app.registerExtension({
                             const newPri = Math.max(0, item.priority - 1);
                             await setPriority(id, newPri);
                         } else if (action === "down") {
-                            // Front items convert to priority 1 on down
                             const newPri = item.priority === -1 ? 1 : Math.min(8, item.priority + 1);
                             await setPriority(id, newPri);
+                        } else if (action === "bottom") {
+                            await setPriority(id, 8);
+                        } else if (action === "delete") {
+                            await deleteItem(id);
                         } else if (action === "hold") {
-                            const newPri = item.priority === 9 ? 5 : 9;
-                            await setPriority(id, newPri);
+                            await setHold(id, true);
+                        } else if (action === "unhold") {
+                            await setHold(id, false);
                         }
                     });
                 });
@@ -449,14 +502,12 @@ app.registerExtension({
 
         function showPopup(anchorEl) {
             if (!popupEl) popupEl = createPopup();
-            // Position near the button
             const rect = anchorEl.getBoundingClientRect();
             popupEl.style.top = (rect.bottom + 4) + "px";
             popupEl.style.right = (window.innerWidth - rect.right) + "px";
             popupEl.style.display = "block";
             popupVisible = true;
             refreshPopup();
-            // Auto-refresh every 2 seconds while open
             refreshInterval = setInterval(refreshPopup, 2000);
         }
 
@@ -470,17 +521,12 @@ app.registerExtension({
         }
 
         function togglePopup(anchorEl) {
-            if (popupVisible) {
-                hidePopup();
-            } else {
-                showPopup(anchorEl);
-            }
+            if (popupVisible) hidePopup();
+            else showPopup(anchorEl);
         }
 
-        // Close popup when clicking outside
         document.addEventListener("mousedown", (e) => {
             if (popupEl && popupVisible && !popupEl.contains(e.target)) {
-                // Check if click was on the queue button itself
                 if (!e.target.closest(".qc-queue-trigger")) {
                     hidePopup();
                 }
@@ -489,10 +535,9 @@ app.registerExtension({
 
         // ── Top bar buttons ──────────────────────────────
         try {
-            const { ComfyButton } = await import("../../scripts/ui/components/button.js");
-            const { ComfyButtonGroup } = await import("../../scripts/ui/components/buttonGroup.js");
+            const { ComfyButton } = window.comfyAPI.button;
+            const { ComfyButtonGroup } = window.comfyAPI.buttonGroup;
 
-            // Pause button
             const pauseBtn = new ComfyButton({
                 icon: paused ? "play" : "pause",
                 content: paused ? "Resume" : "Pause",
@@ -508,19 +553,16 @@ app.registerExtension({
                         pauseBtn.content = paused ? "Resume" : "Pause";
                         pauseBtn.element.style.background = paused ? "#b33" : "#2a7a2a";
                         pauseBtn.element.style.borderColor = paused ? "#d44" : "#3a9a3a";
-                        // Refresh popup if open
                         refreshPopup();
                     });
                 },
                 classList: "comfyui-button comfyui-menu-mobile-collapse",
             });
 
-            // Set initial color
             pauseBtnRef = pauseBtn;
             pauseBtn.element.style.background = paused ? "#b33" : "#2a7a2a";
             pauseBtn.element.style.borderColor = paused ? "#d44" : "#3a9a3a";
 
-            // Queue panel button
             const queueBtn = new ComfyButton({
                 icon: "format-list-numbered",
                 content: "Queue",

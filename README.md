@@ -61,7 +61,7 @@ The panel can display jobs sorted **By Time** (submission order) or **By Priorit
 
 ![DeleteJobQueue](images/DeleteJobQueue.png)
 
-A new button was added for deleting individual jobs from the queue. Pressing the Trashcan button![DeleteJob](images/DeleteJob.png)will remove that job before it runs. Warning: there is no "Are you sure?" safety net. The button has been moved away from the queue buttons to minimize mis-presses, but once it is pressed the job is gone so be careful. 
+A new button was added for deleting individual jobs from the queue. Pressing the Trashcan button ![DeleteJob](images/DeleteJob.png) will remove that job before it runs. Warning: there is no "Are you sure?" safety net. The button has been moved away from the queue buttons to minimize mis-presses, but once it is pressed the job is gone so be careful. 
 
 
 
@@ -172,7 +172,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 1.2.2	Fix logic where shift+Run was not setting the job to 0 priority.
 1.3.0	Added extra handeling for shift+Run submission.
 1.4.0	General reworking of the Queue Panel, added some reuested features, but fix (Shift+Run) 
-1.5.0	Added delete button, other background issues. Fix for legacy API (Issue #2).
+1.5.2	Added delete button, other background issues. Fix for legacy API (Issue #2). depreciate 1.5.0, 1.5.1
 ```
 
 

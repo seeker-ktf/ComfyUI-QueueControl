@@ -237,6 +237,20 @@ app.registerExtension({
             console.warn("[QueueControl] Could not fetch initial status:", e);
         }
 
+        // Register client ID so restored jobs run in this tab
+        try {
+            const clientId = window.name;
+            if (clientId) {
+                await fetch("/queue_control/register_client", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ client_id: clientId }),
+                });
+            }
+        } catch (e) {
+            console.warn("[QueueControl] Could not register client ID:", e);
+        }
+
         // Poll for restore message
         let restoreCheckCount = 0;
         const restoreChecker = setInterval(async () => {

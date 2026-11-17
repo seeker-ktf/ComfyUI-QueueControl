@@ -24,6 +24,9 @@ _AUTO_BACKUP_PATH = os.path.join(_EXTENSION_DIR, "auto_backup.json")
 logging.info(f"{LOG_PREFIX} Loading extension...")
 
 
+# ── Client ID tracking ───────────────────────────────────────────
+_current_client_id = None
+
 # ── Pause state ───────────────────────────────────────────────────
 _paused = False
 _pause_lock = threading.Lock()
@@ -321,6 +324,10 @@ async def _load_queue_from_file(save_path):
         prompt_id = saved_item.get("prompt_id", str(uuid.uuid4()))
         priority = saved_item.get("priority", DEFAULT_PRIORITY)
         extra_data = saved_item.get("extra_data", {})
+        if _current_client_id:
+            extra_data["client_id"] = _current_client_id
+        else:
+            extra_data.pop("client_id", None)
         outputs_to_execute = saved_item.get("outputs_to_execute", [])
 
         try:
@@ -438,6 +445,33 @@ async def qc_status(request):
     if msg:
         resp["restore_message"] = msg
     return web.json_response(resp)
+
+
+@PromptServer.instance.routes.post("/queue_control/register_client")
+async def qc_register_client(request):
+    global _current_client_id
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    client_id = data.get("client_id")
+    if not client_id:
+        return web.json_response({"error": "Need client_id"}, status=400)
+
+    _current_client_id = client_id
+
+    # Restamp any queued items that have a stale or missing client_id
+    pq = PromptServer.instance.prompt_queue
+    updated = 0
+    with pq.mutex:
+        for i, item in enumerate(pq.queue):
+            extra_data = item[3] if len(item) > 3 else {}
+            if extra_data.get("client_id") != client_id:
+                extra_data["client_id"] = client_id
+                updated += 1
+
+    logging.info(f"{LOG_PREFIX} Registered client {client_id[:8]}..., updated {updated} queued item(s)")
+    return web.json_response({"ok": True, "updated": updated})
 
 
 @PromptServer.instance.routes.post("/queue_control/pause")

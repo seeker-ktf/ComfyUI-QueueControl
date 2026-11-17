@@ -173,6 +173,7 @@ This extension interacts directly with ComfyUI's queue internals, which means it
 1.3.0	Added extra handeling for shift+Run submission.
 1.4.0	General reworking of the Queue Panel, added some reuested features, but fix (Shift+Run) 
 1.5.3	Added delete button, other background issues. Fix for legacy API (Issue #2). depreciate 1.5.0-1.5.2
+1.5.4	Fixed the RGThree "Running in another tab" and other UI connection issues could happen on restore.
 ```
 
 
